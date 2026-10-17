@@ -1,7 +1,6 @@
 use minecraft_protocol::prelude::ProtocolVersion;
 use pico_text_component::prelude::Component;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 #[derive(Serialize, Deserialize)]
 pub struct Version {
@@ -27,7 +26,7 @@ pub struct Players {
 pub struct StatusResponse {
     pub version: Version,
     pub players: Players,
-    pub description: Value,
+    pub description: Component,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub favicon: Option<String>,
     #[serde(
@@ -51,8 +50,13 @@ impl StatusResponse {
         favicon: Option<String>,
         protocol_version: ProtocolVersion,
     ) -> Self {
-        let description_json = description.to_version_json(protocol_version);
-        let description = serde_json::from_str(&description_json).unwrap();
+        let description = if protocol_version.is_after_inclusive(ProtocolVersion::V1_16)
+            || protocol_version.is_any()
+        {
+            description.clone()
+        } else {
+            description.to_fallback()
+        };
         StatusResponse {
             version: Version {
                 name: version_name,
