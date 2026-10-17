@@ -1,3 +1,4 @@
+use crate::color::Color;
 use minecraft_protocol::prelude::{BinaryWriter, BinaryWriterError, EncodePacket, ProtocolVersion};
 use pico_nbt::Value;
 use serde::{Deserialize, Serialize};
@@ -7,7 +8,7 @@ pub struct Component {
     #[serde(default)]
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub color: Option<String>,
+    pub color: Option<Color>,
     #[serde(skip_serializing_if = "is_false", default)]
     pub bold: bool,
     #[serde(skip_serializing_if = "is_false", default)]
@@ -41,8 +42,30 @@ impl Component {
         serde_json::to_string(&self).unwrap_or_default()
     }
 
+    pub fn to_version_json(&self, protocol_version: ProtocolVersion) -> String {
+        if protocol_version.is_after_inclusive(ProtocolVersion::V1_16) || protocol_version.is_any()
+        {
+            self.to_json()
+        } else {
+            self.to_fallback().to_json()
+        }
+    }
+
     pub fn to_nbt(&self) -> Value {
         pico_nbt::to_value(self).unwrap()
+    }
+
+    pub fn to_fallback(&self) -> Self {
+        Self {
+            text: self.text.clone(),
+            color: self.color.as_ref().map(|c| Color::Named(c.to_fallback())),
+            bold: self.bold,
+            italic: self.italic,
+            underlined: self.underlined,
+            strikethrough: self.strikethrough,
+            obfuscated: self.obfuscated,
+            extra: self.extra.iter().map(|e| e.to_fallback()).collect(),
+        }
     }
 
     pub fn to_legacy(&self) -> String {
@@ -66,27 +89,8 @@ impl Component {
         }
 
         if let Some(color) = &self.color {
-            let color_letter = match color.as_str() {
-                "black" => '0',
-                "dark_blue" => '1',
-                "dark_green" => '2',
-                "dark_aqua" => '3',
-                "dark_red" => '4',
-                "dark_purple" => '5',
-                "gold" => '6',
-                "gray" => '7',
-                "dark_gray" => '8',
-                "blue" => '9',
-                "green" => 'a',
-                "aqua" => 'b',
-                "red" => 'c',
-                "light_purple" => 'd',
-                "yellow" => 'e',
-                "white" => 'f',
-                _ => 'f',
-            };
             s.push('§');
-            s.push(color_letter);
+            s.push(color.legacy_char());
         }
 
         if self.bold {
@@ -129,8 +133,69 @@ impl EncodePacket for Component {
         if protocol_version.is_after_inclusive(ProtocolVersion::V1_20_3) {
             self.to_nbt().encode(writer, protocol_version)?;
         } else {
-            self.to_json().encode(writer, protocol_version)?;
+            self.to_version_json(protocol_version)
+                .encode(writer, protocol_version)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_to_version_json_fallback() {
+        let comp = Component {
+            text: "Hello".to_string(),
+            color: Some(Color::Hex(0xFF, 0x55, 0x55)),
+            ..Default::default()
+        };
+
+        let json_modern = comp.to_version_json(ProtocolVersion::V1_16);
+        assert!(json_modern.contains("\"color\":\"#ff5555\""));
+        let json_any = comp.to_version_json(ProtocolVersion::Any);
+        assert!(json_any.contains("\"color\":\"#ff5555\""));
+
+        let json_legacy = comp.to_version_json(ProtocolVersion::V1_15_2);
+        assert!(json_legacy.contains("\"color\":\"red\""));
+        assert!(!json_legacy.contains("#ff5555"));
+
+        let json_v1_8 = comp.to_version_json(ProtocolVersion::V1_8);
+        assert!(json_v1_8.contains("\"color\":\"red\""));
+    }
+
+    #[test]
+    fn test_to_legacy_with_hex_color() {
+        let comp = Component {
+            text: "World".to_string(),
+            color: Some(Color::Hex(0x55, 0xFF, 0x55)),
+            ..Default::default()
+        };
+
+        let legacy = comp.to_legacy();
+
+        assert!(legacy.contains("§aWorld"));
+    }
+
+    #[test]
+    fn test_component_encode_packet_across_versions() {
+        let comp = Component {
+            text: "Test".to_string(),
+            color: Some(Color::Hex(0x00, 0x00, 0x00)),
+            ..Default::default()
+        };
+
+        let mut writer_v1_12 = BinaryWriter::new();
+        comp.encode(&mut writer_v1_12, ProtocolVersion::V1_12_2)
+            .unwrap();
+        let str_v1_12 = String::from_utf8_lossy(writer_v1_12.as_slice());
+        assert!(str_v1_12.contains("\"color\":\"black\""));
+
+        let mut writer_v1_16 = BinaryWriter::new();
+        comp.encode(&mut writer_v1_16, ProtocolVersion::V1_16)
+            .unwrap();
+        let str_v1_16 = String::from_utf8_lossy(writer_v1_16.as_slice());
+        assert!(str_v1_16.contains("\"color\":\"#000000\""));
     }
 }

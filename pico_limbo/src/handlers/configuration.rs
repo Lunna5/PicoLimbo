@@ -402,7 +402,7 @@ pub fn send_message(batch: &mut Batch, component: &Component, protocol_version: 
         let packet = SystemChatMessagePacket::component(component);
         batch.queue(|| PacketRegistry::SystemChatMessage(packet));
     } else {
-        let packet = LegacyChatMessagePacket::system(component);
+        let packet = LegacyChatMessagePacket::system(component, protocol_version);
         batch.queue(|| PacketRegistry::LegacyChatMessage(packet));
     }
 }

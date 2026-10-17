@@ -19,9 +19,9 @@ pub struct LegacyChatMessagePacket {
 }
 
 impl LegacyChatMessagePacket {
-    pub fn system(component: &Component) -> Self {
+    pub fn system(component: &Component, protocol_version: ProtocolVersion) -> Self {
         Self {
-            content: component.to_json(),
+            content: component.to_version_json(protocol_version),
             position: 1,
             sender: UuidAsString::default(),
         }

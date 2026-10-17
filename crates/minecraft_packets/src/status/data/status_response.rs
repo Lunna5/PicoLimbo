@@ -1,3 +1,4 @@
+use minecraft_protocol::prelude::ProtocolVersion;
 use pico_text_component::prelude::Component;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -48,8 +49,10 @@ impl StatusResponse {
         online_players: u32,
         max_players: u32,
         favicon: Option<String>,
+        protocol_version: ProtocolVersion,
     ) -> Self {
-        let description = serde_json::to_value(description).unwrap();
+        let description_json = description.to_version_json(protocol_version);
+        let description = serde_json::from_str(&description_json).unwrap();
         StatusResponse {
             version: Version {
                 name: version_name,

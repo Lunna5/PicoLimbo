@@ -1,3 +1,4 @@
+use crate::color::Color;
 use crate::prelude::Component;
 use quick_xml::Reader;
 use quick_xml::events::Event;
@@ -6,7 +7,7 @@ use thiserror::Error;
 #[derive(Default, Clone)]
 struct Style {
     tag: String,
-    color: Option<String>,
+    color: Option<Color>,
     bold: bool,
     italic: bool,
     underlined: bool,
@@ -28,37 +29,85 @@ pub enum MiniMessageError {
     },
 }
 
-fn is_styling_tag(tag: &str) -> bool {
-    matches!(
-        tag,
-        "black"
-            | "dark_blue"
-            | "dark_green"
-            | "dark_aqua"
-            | "dark_red"
-            | "dark_purple"
-            | "gold"
-            | "gray"
-            | "dark_gray"
-            | "blue"
-            | "green"
-            | "aqua"
-            | "red"
-            | "light_purple"
-            | "yellow"
-            | "white"
-            | "bold"
-            | "b"
-            | "italic"
-            | "i"
-            | "em"
-            | "underlined"
-            | "u"
-            | "strikethrough"
-            | "st"
-            | "obfuscated"
-            | "obf"
-    )
+enum ParsedTag {
+    Color(Color),
+    Bold,
+    Italic,
+    Underlined,
+    Strikethrough,
+    Obfuscated,
+    Newline,
+    Reset,
+    None,
+}
+
+fn parse_tag(tag: &str) -> ParsedTag {
+    let lower = tag.to_ascii_lowercase();
+    let lower_str = lower.as_str();
+
+    match lower_str {
+        "bold" | "b" => ParsedTag::Bold,
+        "italic" | "i" | "em" => ParsedTag::Italic,
+        "underlined" | "u" => ParsedTag::Underlined,
+        "strikethrough" | "st" => ParsedTag::Strikethrough,
+        "obfuscated" | "obf" => ParsedTag::Obfuscated,
+        "newline" => ParsedTag::Newline,
+        "reset" | "r" => ParsedTag::Reset,
+        _ => {
+            if let Some(color) = Color::parse(lower_str) {
+                return ParsedTag::Color(color);
+            }
+
+            for prefix in ["color:", "colour:", "c:"] {
+                if let Some(color) = lower_str.strip_prefix(prefix).and_then(Color::parse) {
+                    return ParsedTag::Color(color);
+                }
+            }
+
+            ParsedTag::None
+        }
+    }
+}
+
+fn matches_close_tag(opened_tag: &str, closed_tag: &str) -> bool {
+    let opened = opened_tag.to_ascii_lowercase();
+    let closed = closed_tag.to_ascii_lowercase();
+
+    if opened == closed {
+        return true;
+    }
+
+    if (closed == "color" || closed == "colour" || closed == "c")
+        && (opened.starts_with("color:")
+            || opened.starts_with("colour:")
+            || opened.starts_with("c:")
+            || opened.starts_with('#')
+            || Color::parse(&opened).is_some())
+    {
+        return true;
+    }
+
+    if (closed == "bold" || closed == "b") && (opened == "bold" || opened == "b") {
+        return true;
+    }
+    if (closed == "italic" || closed == "i" || closed == "em")
+        && (opened == "italic" || opened == "i" || opened == "em")
+    {
+        return true;
+    }
+    if (closed == "underlined" || closed == "u") && (opened == "underlined" || opened == "u") {
+        return true;
+    }
+    if (closed == "strikethrough" || closed == "st")
+        && (opened == "strikethrough" || opened == "st")
+    {
+        return true;
+    }
+    if (closed == "obfuscated" || closed == "obf") && (opened == "obfuscated" || opened == "obf") {
+        return true;
+    }
+
+    false
 }
 
 pub fn parse_mini_message(input: &str) -> Result<Component, MiniMessageError> {
@@ -79,42 +128,68 @@ pub fn parse_mini_message(input: &str) -> Result<Component, MiniMessageError> {
             Event::Start(e) => {
                 let tag_name = e.name().as_ref().to_string();
 
-                if tag_name == "newline" {
-                    if let Some(current_style) = style_stack.last() {
-                        flat_components.push(Component {
-                            text: "\n".to_string(),
-                            color: current_style.color.clone(),
-                            bold: current_style.bold,
-                            italic: current_style.italic,
-                            underlined: current_style.underlined,
-                            strikethrough: current_style.strikethrough,
-                            obfuscated: current_style.obfuscated,
-                            extra: vec![],
-                        });
-                    }
-                } else if is_styling_tag(&tag_name) {
-                    let mut new_style = style_stack.last().cloned().unwrap_or_default();
-                    new_style.tag = tag_name.clone();
-                    match tag_name.as_str() {
-                        "black" | "dark_blue" | "dark_green" | "dark_aqua" | "dark_red"
-                        | "dark_purple" | "gold" | "gray" | "dark_gray" | "blue" | "green"
-                        | "aqua" | "red" | "light_purple" | "yellow" | "white" => {
-                            new_style.color = Some(tag_name);
+                match parse_tag(&tag_name) {
+                    ParsedTag::Newline => {
+                        if let Some(current_style) = style_stack.last() {
+                            flat_components.push(Component {
+                                text: "\n".to_string(),
+                                color: current_style.color.clone(),
+                                bold: current_style.bold,
+                                italic: current_style.italic,
+                                underlined: current_style.underlined,
+                                strikethrough: current_style.strikethrough,
+                                obfuscated: current_style.obfuscated,
+                                extra: vec![],
+                            });
                         }
-                        "bold" | "b" => new_style.bold = true,
-                        "italic" | "i" | "em" => new_style.italic = true,
-                        "underlined" | "u" => new_style.underlined = true,
-                        "strikethrough" | "st" => new_style.strikethrough = true,
-                        "obfuscated" | "obf" => new_style.obfuscated = true,
-                        _ => {}
                     }
-                    style_stack.push(new_style);
+                    ParsedTag::Reset => {
+                        style_stack = vec![Style::default()];
+                    }
+                    ParsedTag::Color(color) => {
+                        let mut new_style = style_stack.last().cloned().unwrap_or_default();
+                        new_style.tag = tag_name;
+                        new_style.color = Some(color);
+                        style_stack.push(new_style);
+                    }
+                    ParsedTag::Bold => {
+                        let mut new_style = style_stack.last().cloned().unwrap_or_default();
+                        new_style.tag = tag_name;
+                        new_style.bold = true;
+                        style_stack.push(new_style);
+                    }
+                    ParsedTag::Italic => {
+                        let mut new_style = style_stack.last().cloned().unwrap_or_default();
+                        new_style.tag = tag_name;
+                        new_style.italic = true;
+                        style_stack.push(new_style);
+                    }
+                    ParsedTag::Underlined => {
+                        let mut new_style = style_stack.last().cloned().unwrap_or_default();
+                        new_style.tag = tag_name;
+                        new_style.underlined = true;
+                        style_stack.push(new_style);
+                    }
+                    ParsedTag::Strikethrough => {
+                        let mut new_style = style_stack.last().cloned().unwrap_or_default();
+                        new_style.tag = tag_name;
+                        new_style.strikethrough = true;
+                        style_stack.push(new_style);
+                    }
+                    ParsedTag::Obfuscated => {
+                        let mut new_style = style_stack.last().cloned().unwrap_or_default();
+                        new_style.tag = tag_name;
+                        new_style.obfuscated = true;
+                        style_stack.push(new_style);
+                    }
+                    ParsedTag::None => {}
                 }
             }
             Event::End(e) => {
                 let tag_name = e.name().as_ref().to_string();
-                if is_styling_tag(&tag_name)
-                    && let Some(pos) = style_stack.iter().rposition(|s| s.tag == tag_name)
+                if let Some(pos) = style_stack
+                    .iter()
+                    .rposition(|s| matches_close_tag(&s.tag, &tag_name))
                 {
                     style_stack.truncate(pos);
                 }
@@ -127,7 +202,7 @@ pub fn parse_mini_message(input: &str) -> Result<Component, MiniMessageError> {
 
                 if let Some(current_style) = style_stack.last() {
                     flat_components.push(Component {
-                        text, // No need for .to_string() here
+                        text,
                         color: current_style.color.clone(),
                         bold: current_style.bold,
                         italic: current_style.italic,
@@ -140,19 +215,25 @@ pub fn parse_mini_message(input: &str) -> Result<Component, MiniMessageError> {
             }
             Event::Empty(e) => {
                 let tag_name = e.name().as_ref().to_string();
-                if tag_name == "newline"
-                    && let Some(current_style) = style_stack.last()
-                {
-                    flat_components.push(Component {
-                        text: "\n".to_string(),
-                        color: current_style.color.clone(),
-                        bold: current_style.bold,
-                        italic: current_style.italic,
-                        underlined: current_style.underlined,
-                        strikethrough: current_style.strikethrough,
-                        obfuscated: current_style.obfuscated,
-                        extra: vec![],
-                    });
+                match parse_tag(&tag_name) {
+                    ParsedTag::Newline => {
+                        if let Some(current_style) = style_stack.last() {
+                            flat_components.push(Component {
+                                text: "\n".to_string(),
+                                color: current_style.color.clone(),
+                                bold: current_style.bold,
+                                italic: current_style.italic,
+                                underlined: current_style.underlined,
+                                strikethrough: current_style.strikethrough,
+                                obfuscated: current_style.obfuscated,
+                                extra: vec![],
+                            });
+                        }
+                    }
+                    ParsedTag::Reset => {
+                        style_stack = vec![Style::default()];
+                    }
+                    _ => {}
                 }
             }
             Event::Eof => break,
@@ -173,6 +254,7 @@ pub fn parse_mini_message(input: &str) -> Result<Component, MiniMessageError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::color::NamedColor;
 
     #[test]
     fn test_example_from_prompt_nested() {
@@ -183,7 +265,7 @@ mod tests {
             extra: vec![
                 Component {
                     text: "Hello,".to_string(),
-                    color: Some("red".to_string()),
+                    color: Some(Color::Named(NamedColor::Red)),
                     bold: true,
                     ..Component::default()
                 },
@@ -193,7 +275,45 @@ mod tests {
                 },
                 Component {
                     text: "world!".to_string(),
-                    color: Some("blue".to_string()),
+                    color: Some(Color::Named(NamedColor::Blue)),
+                    ..Component::default()
+                },
+            ],
+            ..Component::default()
+        };
+
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_hex_colors() {
+        let input =
+            "<#ff0088>Hex color</#ff0088> <color:#123456>Verbose hex</color> <c:#abcdef>Short</c>";
+        let result = parse_mini_message(input).unwrap();
+
+        let expected = Component {
+            extra: vec![
+                Component {
+                    text: "Hex color".to_string(),
+                    color: Some(Color::Hex(0xFF, 0x00, 0x88)),
+                    ..Component::default()
+                },
+                Component {
+                    text: " ".to_string(),
+                    ..Component::default()
+                },
+                Component {
+                    text: "Verbose hex".to_string(),
+                    color: Some(Color::Hex(0x12, 0x34, 0x56)),
+                    ..Component::default()
+                },
+                Component {
+                    text: " ".to_string(),
+                    ..Component::default()
+                },
+                Component {
+                    text: "Short".to_string(),
+                    color: Some(Color::Hex(0xAB, 0xCD, 0xEF)),
                     ..Component::default()
                 },
             ],
@@ -209,8 +329,6 @@ mod tests {
         let component = parse_mini_message(input).unwrap();
         let json_output = serde_json::to_string(&component).unwrap();
 
-        // Note: The order of fields in JSON is not guaranteed, but serde usually serializes in order.
-        // A more robust test would parse the JSON back and compare, but for this case, string comparison is fine.
         let expected_json = r#"{"text":"","extra":[{"text":"Hello,","color":"red","bold":true},{"text":" "},{"text":"world!","color":"blue"}]}"#;
 
         assert_eq!(json_output, expected_json);
@@ -239,18 +357,18 @@ mod tests {
             extra: vec![
                 Component {
                     text: "This is red, ".to_string(),
-                    color: Some("red".to_string()),
+                    color: Some(Color::Named(NamedColor::Red)),
                     ..Component::default()
                 },
                 Component {
                     text: "and this is bold red.".to_string(),
-                    color: Some("red".to_string()),
+                    color: Some(Color::Named(NamedColor::Red)),
                     bold: true,
                     ..Component::default()
                 },
                 Component {
                     text: " Back to red.".to_string(),
-                    color: Some("red".to_string()),
+                    color: Some(Color::Named(NamedColor::Red)),
                     ..Component::default()
                 },
             ],
@@ -276,13 +394,13 @@ mod tests {
             extra: vec![
                 Component {
                     text: "Non-closing tags".to_string(),
-                    color: Some("red".to_string()),
+                    color: Some(Color::Named(NamedColor::Red)),
                     bold: true,
                     ..Component::default()
                 },
                 Component {
                     text: " are supported".to_string(),
-                    color: Some("red".to_string()),
+                    color: Some(Color::Named(NamedColor::Red)),
                     bold: true,
                     italic: true,
                     ..Component::default()
@@ -325,17 +443,39 @@ mod tests {
             extra: vec![
                 Component {
                     text: "Hello".to_string(),
-                    color: Some("green".to_string()),
+                    color: Some(Color::Named(NamedColor::Green)),
                     ..Component::default()
                 },
                 Component {
                     text: "\n".to_string(),
-                    color: Some("green".to_string()),
+                    color: Some(Color::Named(NamedColor::Green)),
                     ..Component::default()
                 },
                 Component {
                     text: "world!".to_string(),
-                    color: Some("green".to_string()),
+                    color: Some(Color::Named(NamedColor::Green)),
+                    ..Component::default()
+                },
+            ],
+            ..Component::default()
+        };
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_reset_tag() {
+        let input = "<red><bold>Red and bold<reset>Normal text</reset>";
+        let result = parse_mini_message(input).unwrap();
+        let expected = Component {
+            extra: vec![
+                Component {
+                    text: "Red and bold".to_string(),
+                    color: Some(Color::Named(NamedColor::Red)),
+                    bold: true,
+                    ..Component::default()
+                },
+                Component {
+                    text: "Normal text".to_string(),
                     ..Component::default()
                 },
             ],
