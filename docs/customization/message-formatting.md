@@ -18,6 +18,8 @@ MiniMessage uses angle brackets `<>` to define formatting tags:
 ```xml
 <red>This text is red</red>
 <green>This text is green</green>
+<#ff5555>Custom hex color</#ff5555>
+<color:#3498db>Alternative hex syntax</color>
 <bold>This text is bold</bold>
 ```
 :::
@@ -27,12 +29,15 @@ MiniMessage uses angle brackets `<>` to define formatting tags:
 PicoLimbo currently supports a **subset** of MiniMessage features:
 
 ### ✅ Supported
-- **Colors** - All standard Minecraft colors
-- **Formatting** - `<bold>`, `<italic>`, `<underlined>`, `<strikethrough>` and `<obfuscated>`
+- **Colors** - All standard Minecraft colors (e.g. `<red>`, `<gold>`, `<blue>`) and custom hexadecimal colors (`<#RRGGBB>` or `<color:#RRGGBB>`)
+- **Formatting** - `<bold>`, `<italic>`, `<underlined>`, `<strikethrough>`, `<obfuscated>`, and `<reset>`
 - **New lines** - `<newline>`
 
+> [!NOTE]
+> **Version Compatibility & Fallback**: Hexadecimal colors (`#RRGGBB`) are natively supported on Minecraft Java Edition 1.16 and newer. For older clients (versions 1.7.2 through 1.15.2) and legacy text output, PicoLimbo automatically falls back to the closest standard Minecraft color using Euclidean RGB color matching.
+
 ### ❌ Not Yet Supported
-- Gradients and custom colors
+- Gradients and rainbow
 - Hover events
 - Click events
 - Custom fonts
@@ -43,6 +48,6 @@ PicoLimbo currently supports a **subset** of MiniMessage features:
 
 :::code-group
 ```toml [server.toml]
-welcome_message = "<green>Welcome to <bold>PicoLimbo</bold>!</green>"
+welcome_message = "<#55ff55>Welcome to <bold><#ffaa00>PicoLimbo</#ffaa00></bold>!</#55ff55>"
 ```
 :::
